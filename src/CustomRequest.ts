@@ -20,7 +20,7 @@ export interface HttpClient {
     setTimeout(time: number): void
     removeTimeout(): void
     setAssignResponseCookie(flag: boolean): void
-    // setMaxRedirects(maxRedirects: number): void
+    getCookiesByDomain(domain: string): Record<string, string> | undefined
 }
 
 type Options = {
@@ -143,6 +143,10 @@ abstract class BaseClient {
             default:
                 throw new Error(`Unsupported proxy protocol: ${url.protocol}`)
         }
+    }
+
+    getCookiesByDomain(domain: string): Record<string, string> | undefined {
+        return this.cookies[domain] || undefined;
     }
 
     getCookiesHeader(domain: string, configCookie: Record<string, any>): string {
@@ -446,6 +450,10 @@ class CustomRequest {
 
     setResponseHook(hook: <T>(response: ApiResponse<T>, url: string, options: RequestOptions) => void) {
         this.responseHook = hook
+    }
+
+    getCookiesByDomain(domain: string): Record<string, string> | undefined {
+        return this.client.getCookiesByDomain(domain)
     }
 }
 
