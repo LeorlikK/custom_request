@@ -13,13 +13,14 @@ export interface HttpClient {
     post(url: string, data?: any, options?: RequestOptions): Promise<any>
     setHeaders(newHeaders: Record<string, string>): void
     removeHeaders(headerKeys: string[]): void
-    setCookies(newCookies: Record<string, string>): void
-    removeCookies(cookieKeys: string[]): void
+    setCookies(newCookies: Record<string, string>, domain: string): void
+    removeCookies(cookieKeys: string[], domain: string): void
     setProxy(proxy: string): void
     removeProxy(): void
     setTimeout(time: number): void
     removeTimeout(): void
     setAssignResponseCookie(flag: boolean): void
+    // setMaxRedirects(maxRedirects: number): void
 }
 
 type Options = {
@@ -28,8 +29,11 @@ type Options = {
     loggerTumbler?: boolean
     timeout?: number
     maxConcurrent?: number
-    minTime?: number,
+    minTime?: number
     assignResponseCookie?: boolean
+    followRedirect?: boolean
+    preRequestHook?: (url: string, options: RequestOptions) => void
+    responseHook?: <T>(response: ApiResponse<T>, url: string, options: RequestOptions) => void
 }
 
 type RequestOptions = {
@@ -38,6 +42,7 @@ type RequestOptions = {
     cookie?: Record<string, string>
     proxy?: string
     timeout?: number
+    followRedirect?: boolean
 }
 
 type Params = {
@@ -49,11 +54,12 @@ export type ApiResponse<T> = {
     code: number
     message: string
     data?: T
+    headers?: Record<string, any>
 }
 
 abstract class BaseClient {
     headers: Record<string, string> = {}
-    cookies: Record<string, string> = {}
+    cookies: Record<string, Record<string, string>> = {}
     timeout?: number = 20000
     assignResponseCookie: boolean = false
     proxy?: string
@@ -84,21 +90,27 @@ abstract class BaseClient {
         }
     }
 
-    setCookies(newCookies: Record<string, string>): void {
-        this.cookies = { ...this.cookies, ...newCookies }
+    setCookies(newCookies: Record<string, string>, domain: string): void {
+        if (!this.cookies[domain]) {
+            this.cookies[domain] = {}
+        }
+        this.cookies[domain] = { ...this.cookies[domain], ...newCookies }
     }
 
-    removeCookies(cookieKeys: string[]): void {
-        for (const key of cookieKeys) {
-            delete this.cookies[key]
+    removeCookies(cookieKeys: string[], domain: string): void {
+        if (this.cookies[domain]) {
+            for (const key of cookieKeys) {
+                delete this.cookies[domain][key]
+            }
         }
     }
 
-    setResponseCookie(res:any) {
-        res.headers["set-cookie"]?.forEach((newCookie:any) => {
-            const [cookie] = newCookie.split(';')
+    setResponseCookie(res:any, domain: string) {
+        res.headers["set-cookie"]?.forEach((newCookie: string) => {
+            const [cookie, ...options] = newCookie.split(';')
             const [name, value] = cookie.split('=')
-            this.cookies[name.trim()] = value.trim()
+            if (!this.cookies[domain]) this.cookies[domain] = {}
+            this.cookies[domain][name.trim()] = value.trim()
         })
     }
 
@@ -133,10 +145,13 @@ abstract class BaseClient {
         }
     }
 
-    getCookiesHeader(configCookie: Record<string, any>): string {
-        Object.entries(this.cookies).forEach(([key, value]) => {
-            if (!configCookie.hasOwnProperty(key))
-            configCookie[key] = value
+    getCookiesHeader(domain: string, configCookie: Record<string, any>): string {
+        const domainCookies = this.cookies[domain] || {}
+
+        Object.entries(domainCookies).forEach(([key, value]) => {
+            if (!configCookie.hasOwnProperty(key)) {
+                configCookie[key] = value
+            }
         })
 
         return Object.entries(configCookie)
@@ -157,9 +172,10 @@ abstract class BaseClient {
         this.assignResponseCookie = flag
     }
 
-    settingConfig(configSettings: Record<string, any>) {
-        configSettings.headers = {...this.getHeaders(configSettings.headers), Cookie: this.getCookiesHeader(configSettings.cookie)}
+    settingConfig(configSettings: Record<string, any>, domain: string) {
+        configSettings.headers = {...this.getHeaders(configSettings.headers), Cookie: this.getCookiesHeader(domain, configSettings.cookie)}
 
+        delete configSettings.domain
         delete configSettings.proxy
         delete configSettings.cookie
     }
@@ -167,44 +183,58 @@ abstract class BaseClient {
 class AxiosClient extends BaseClient implements HttpClient {
     async #request<T>(execute:(config: Record<string, any>) => Promise<any>, configSettings: Record<string, any>): Promise<ApiResponse<T>> {
         try {
+            const domain = configSettings.domain
             this.settingConfig(configSettings)
 
             const res = await execute(configSettings)
-            if (this.assignResponseCookie) this.setResponseCookie(res)
+            if (this.assignResponseCookie) this.setResponseCookie(res, domain)
 
             return {
                 success: true,
                 code: res.status,
                 message: res.statusText,
-                data: res.data
+                data: res.data,
+                headers: res.headers
             }
         }catch (e:any) {
+            if (e.response?.status === 302 || e.response?.status === 303) {
+                return {
+                    success: true,
+                    code: e.response?.status,
+                    message: e.response.statusText,
+                    data: e.response.data,
+                    headers: e.response.headers
+                }
+            }
             return {
                 success: false,
-                code: e.response?.status || 500,
+                code: e.response?.status || undefined,
                 message: e.message,
             }
         }
     }
 
     async get(url:string, options: RequestOptions = {}): Promise<any> {
-        const { params = {}, headers = {}, cookie = {}, proxy } = options
+        const { params = {}, headers = {}, cookie = {}, proxy, followRedirect = true } = options
         const finalUrl = this.buildRequestString(url, params)
+        const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
             return await axios.get(finalUrl, config)
         }, {
-            headers, cookie, proxy
+            headers, cookie, proxy, domain, followRedirect
         })
     }
 
     async post(url:string, data:any, options: RequestOptions = {}): Promise<any> {
-        const { headers = {}, cookie = {}, proxy } = options
+        const { headers = {}, cookie = {}, proxy, followRedirect = true } = options
+        const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
+            console.log('config: ', config)
             return await axios.post(url, data, config)
         }, {
-            headers, cookie, proxy
+            headers, cookie, proxy, domain, followRedirect
         })
     }
 
@@ -219,45 +249,57 @@ class AxiosClient extends BaseClient implements HttpClient {
             configSettings.timeout = this.timeout
         }
 
-        super.settingConfig(configSettings)
+        if (configSettings.followRedirect === false)  {
+            configSettings.maxRedirects = 0
+        }
+
+        super.settingConfig(configSettings, configSettings.domain)
     }
 }
 class GotClient extends BaseClient implements HttpClient {
     async #request<T>(execute:(config: Record<string, any>) => Promise<any>, configSettings: Record<string, any>): Promise<ApiResponse<T>> {
         try {
+            const domain = configSettings.domain
             this.settingConfig(configSettings)
 
             const res = await execute(configSettings)
-            if (this.assignResponseCookie) this.setResponseCookie(res)
+            if (this.assignResponseCookie) this.setResponseCookie(res, domain)
+
+            try {
+                res.body = JSON.parse(res.body)
+            } catch(e:any) {}
 
             return {
                 success: true,
                 code: res.statusCode,
                 message: res.statusMessage,
-                data: res.body
+                data: res.body,
+                headers: res.headers
             }
         }catch (e:any) {
             return {
                 success: false,
-                code: e.response?.statusCode || 500,
+                code: e.response?.statusCode || undefined,
                 message: e.message,
             }
         }
     }
 
     async get(url:string, options: RequestOptions = {}): Promise<any> {
-        const { params = {}, headers = {}, cookie = {}, proxy } = options
+        const { params = {}, headers = {}, cookie = {}, proxy, followRedirect = true } = options
         const finalUrl = this.buildRequestString(url, params)
+        const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
             return await got.get(finalUrl, config)
         }, {
-            headers, cookie, proxy
+            headers, cookie, proxy, domain, followRedirect
         })
     }
 
     async post(url:string, data:any, options: RequestOptions = {}): Promise<any> {
-        const { headers = {}, cookie = {}, proxy } = options
+        const { headers = {}, cookie = {}, proxy, followRedirect = true } = options
+        const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
             return await got.post(url, {
@@ -265,7 +307,7 @@ class GotClient extends BaseClient implements HttpClient {
                 ...config
             })
         }, {
-            headers, cookie, proxy
+            headers, cookie, proxy, domain, followRedirect
         })
     }
 
@@ -286,7 +328,7 @@ class GotClient extends BaseClient implements HttpClient {
             configSettings.timeout = { request: configSettings.timeout }
         }
 
-        super.settingConfig(configSettings)
+        super.settingConfig(configSettings, configSettings.domain)
     }
 }
 
@@ -295,6 +337,8 @@ class CustomRequest {
     loggerTumbler: boolean
     limiter: Bottleneck
     client: HttpClient
+    protected preRequestHook?: (url: string, options: RequestOptions) => void
+    protected responseHook?: <T>(response: ApiResponse<T>, url: string, options: RequestOptions) => void
 
     constructor(options: Options) {
         this.logger = loggerWinston.child({service: options.logName ?? "default"})
@@ -307,6 +351,13 @@ class CustomRequest {
         if (options.minTime) {
             bottleneckOptions.minTime = options.minTime
         }
+        if (options.preRequestHook) {
+            this.preRequestHook = options.preRequestHook
+        }
+        if (options.responseHook) {
+            this.responseHook = options.responseHook
+        }
+
         this.limiter = new Bottleneck(bottleneckOptions)
 
         if (options.requesterType === "got") {
@@ -321,6 +372,10 @@ class CustomRequest {
     }
 
     async get<T>(url: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
+        if (this.preRequestHook) {
+            this.preRequestHook(url, options)
+        }
+
         return await this.limiter.schedule(async () => {
             const response = await this.client.get(url, options)
             if (!response.success) {
@@ -328,6 +383,11 @@ class CustomRequest {
                     this.logger.error(chalk.red(`${url} ERROR: ${response.message}`))
                 }
             }
+
+            if (this.responseHook) {
+                this.responseHook(response, url, options)
+            }
+
             return response
         })
     }
@@ -352,12 +412,12 @@ class CustomRequest {
         this.client.removeHeaders(headerKeys)
     }
 
-    setCookies(newCookies: Record<string, string>) {
-        this.client.setCookies(newCookies)
+    setCookies(newCookies: Record<string, string>, domain: string) {
+        this.client.setCookies(newCookies, domain)
     }
 
-    removeCookies(cookieKeys: string[]) {
-        this.client.removeCookies(cookieKeys)
+    removeCookies(cookieKeys: string[], domain: string) {
+        this.client.removeCookies(cookieKeys, domain)
     }
 
     setProxy(proxy: string) {
@@ -378,6 +438,14 @@ class CustomRequest {
 
     setAssignResponseCookie(flag:boolean) {
         this.client.setAssignResponseCookie(flag)
+    }
+
+    setPreRequestHook(hook: (url: string, options: RequestOptions) => void) {
+        this.preRequestHook = hook
+    }
+
+    setResponseHook(hook: <T>(response: ApiResponse<T>, url: string, options: RequestOptions) => void) {
+        this.responseHook = hook
     }
 }
 
