@@ -1,6 +1,6 @@
 {
   "name": "@leorlikk/custom_request",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Custom_request: axios, got.",
   "repository": {
     "type": "git",
@@ -11,8 +11,8 @@
     "build": "tsc -p tsconfig.esm.json"
   },
   "exports": {
-      "types": "./dist/lib/esm/CustomRequest.d.ts",
-      "default": "./dist/lib/esm/CustomRequest.js"
+    "types": "./dist/lib/esm/CustomRequest.d.ts",
+    "default": "./dist/lib/esm/CustomRequest.js"
   },
   "files": [
     "dist"
