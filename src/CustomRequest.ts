@@ -4,9 +4,9 @@ import {Logger} from "winston";
 import chalk from "chalk";
 import got from "got";
 import axios from "axios";
-import {HttpsProxyAgent} from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import {format as formatUrl, parse as parseUrl} from 'url';
+import { HttpsProxyAgent, HttpProxyAgent } from "hpagent"
 
 export interface HttpClient {
     get(url:string, options?: RequestOptions): Promise<any>
@@ -136,7 +136,7 @@ abstract class BaseClient {
         switch (url.protocol) {
             case 'http:':
             case 'https:':
-                return new HttpsProxyAgent(proxy)
+                return new HttpsProxyAgent({ proxy: proxy })
             case 'socks4:':
             case 'socks5:':
                 return new SocksProxyAgent(proxy)
@@ -235,7 +235,6 @@ class AxiosClient extends BaseClient implements HttpClient {
         const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
-            console.log('config: ', config)
             return await axios.post(url, data, config)
         }, {
             headers, cookie, proxy, domain, followRedirect

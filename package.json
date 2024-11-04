@@ -1,6 +1,6 @@
 {
   "name": "@leorlikk/custom_request",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Custom_request: axios, got.",
   "repository": {
     "type": "git",
@@ -22,18 +22,19 @@
   "license": "ISC",
   "dependencies": {
     "axios": "^1.7.2",
-    "got": "^14.4.1",
-    "chalk": "^5.3.0",
     "bottleneck": "^2.19.5",
+    "chalk": "^5.3.0",
+    "got": "^14.4.1",
+    "hpagent": "^1.2.0",
     "https-proxy-agent": "^7.0.5",
     "socks-proxy-agent": "^8.0.4",
     "winston": "^3.13.1"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
     "@types/axios": "^0.14.0",
     "@types/got": "^9.6.12",
     "@types/node": "^22.5.1",
-    "@types/winston": "^2.4.4"
+    "@types/winston": "^2.4.4",
+    "typescript": "^5.5.4"
   }
 }
