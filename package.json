@@ -1,6 +1,6 @@
 {
   "name": "@leorlikk/custom_request",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Custom_request: axios, got.",
   "repository": {
     "type": "git",

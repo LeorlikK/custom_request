@@ -6,7 +6,7 @@ import got from "got";
 import axios from "axios";
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import {format as formatUrl, parse as parseUrl} from 'url';
-import { HttpsProxyAgent, HttpProxyAgent } from "hpagent"
+import { HttpsProxyAgent, HttpProxyAgent } from "hpagent";
 
 export interface HttpClient {
     get(url:string, options?: RequestOptions): Promise<any>
@@ -219,25 +219,25 @@ class AxiosClient extends BaseClient implements HttpClient {
     }
 
     async get(url:string, options: RequestOptions = {}): Promise<any> {
-        const { params = {}, headers = {}, cookie = {}, proxy, followRedirect = true } = options
+        const { params = {}, headers = {}, cookie = {}, proxy, followRedirect = true, timeout } = options
         const finalUrl = this.buildRequestString(url, params)
         const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
             return await axios.get(finalUrl, config)
         }, {
-            headers, cookie, proxy, domain, followRedirect
+            headers, cookie, proxy, domain, followRedirect, timeout
         })
     }
 
     async post(url:string, data:any, options: RequestOptions = {}): Promise<any> {
-        const { headers = {}, cookie = {}, proxy, followRedirect = true } = options
+        const { headers = {}, cookie = {}, proxy, followRedirect = true, timeout } = options
         const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
             return await axios.post(url, data, config)
         }, {
-            headers, cookie, proxy, domain, followRedirect
+            headers, cookie, proxy, domain, followRedirect, timeout
         })
     }
 
@@ -248,7 +248,9 @@ class AxiosClient extends BaseClient implements HttpClient {
             configSettings.httpsAgent = this.determineAgent(this.proxy)
         }
 
-        if (this.timeout && !configSettings.timeout){
+        if (configSettings.timeout) {
+            configSettings.timeout = configSettings.timeout
+        } else if (this.timeout) {
             configSettings.timeout = this.timeout
         }
 
@@ -289,28 +291,41 @@ class GotClient extends BaseClient implements HttpClient {
     }
 
     async get(url:string, options: RequestOptions = {}): Promise<any> {
-        const { params = {}, headers = {}, cookie = {}, proxy, followRedirect = true } = options
+        const { params = {}, headers = {}, cookie = {}, proxy, followRedirect = true, timeout } = options
         const finalUrl = this.buildRequestString(url, params)
         const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
             return await got.get(finalUrl, config)
         }, {
-            headers, cookie, proxy, domain, followRedirect
+            headers, cookie, proxy, domain, followRedirect, timeout
         })
     }
 
     async post(url:string, data:any, options: RequestOptions = {}): Promise<any> {
-        const { headers = {}, cookie = {}, proxy, followRedirect = true } = options
+        const { headers = {}, cookie = {}, proxy, followRedirect = true, timeout } = options
         const domain = new URL(url).hostname
 
         return await this.#request(async (config: Record<string, any>) => {
-            return await got.post(url, {
-                json: data,
-                ...config
-            })
+            // Проверяем, является ли data FormData или другим типом, который не нужно сериализовать в JSON
+            const isFormData = data instanceof FormData || 
+                              (typeof data === 'object' && data?.constructor?.name === 'FormData') ||
+                              (data && typeof data === 'object' && data.constructor?.name === 'Buffer') ||
+                              typeof data === 'string'
+            
+            if (isFormData) {
+                return await got.post(url, {
+                    body: data,
+                    ...config
+                })
+            } else {
+                return await got.post(url, {
+                    json: data,
+                    ...config
+                })
+            }
         }, {
-            headers, cookie, proxy, domain, followRedirect
+            headers, cookie, proxy, domain, followRedirect, timeout
         })
     }
 
@@ -325,10 +340,10 @@ class GotClient extends BaseClient implements HttpClient {
             }
         }
 
-        if (this.timeout && !configSettings.timeout){
-            configSettings.timeout = { request: this.timeout }
-        } else if (configSettings.timeout) {
+        if (configSettings.timeout) {
             configSettings.timeout = { request: configSettings.timeout }
+        } else if (this.timeout) {
+            configSettings.timeout = { request: this.timeout }
         }
 
         super.settingConfig(configSettings, configSettings.domain)
@@ -396,6 +411,10 @@ class CustomRequest {
     }
 
     async post<T>(url: string, data?: any, options: RequestOptions = {}): Promise<ApiResponse<T>> {
+        if (this.preRequestHook) {
+            this.preRequestHook(url, options)
+        }
+
         return await this.limiter.schedule(async () => {
             const response = await this.client.post(url, data, options)
             if (!response.success) {
@@ -403,6 +422,11 @@ class CustomRequest {
                     this.logger.error(chalk.red(`${url} ERROR: ${response.message}`))
                 }
             }
+
+            if (this.responseHook) {
+                this.responseHook(response, url, options)
+            }
+
             return response
         })
     }
